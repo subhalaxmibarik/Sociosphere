@@ -1,0 +1,118 @@
+import express from "express";
+import bodyParser from "body-parser";
+import mongoose from "mongoose";
+import cors from "cors";
+import dotenv from "dotenv";
+import multer from "multer";
+import helmet from "helmet";
+import morgan from "morgan";
+import path from "path";
+import { fileURLToPath } from "url";
+import http from "http";
+import { Server } from "socket.io";
+
+/* ROUTES & CONTROLLERS */
+import authRoutes from "./routes/auth.js";
+import userRoutes from "./routes/users.js";
+import postRoutes from "./routes/posts.js";
+import { register } from "./controllers/auth.js";
+import { createPost } from "./controllers/posts.js";
+import { verifyToken } from "./middleware/auth.js";
+
+/* CONFIG */
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config();
+
+const app = express();
+
+/* MIDDLEWARE */
+app.use(express.json());
+app.use(helmet());
+app.use(helmet.crossOriginResourcePolicy({ policy: "cross-origin" }));
+app.use(morgan("common"));
+app.use(bodyParser.json({ limit: "30mb", extended: true }));
+app.use(bodyParser.urlencoded({ limit: "30mb", extended: true }));
+app.use(cors());
+app.use("/assets", express.static(path.join(__dirname, "public/assets")));
+
+/* FILE STORAGE */
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, "public/assets"),
+  filename: (req, file, cb) => cb(null, file.originalname),
+});
+const upload = multer({ storage });
+
+/* ROUTES WITH FILE UPLOAD */
+app.post("/auth/register", upload.single("picture"), register);
+app.post("/posts", verifyToken, upload.single("picture"), createPost);
+
+/* ROUTES */
+app.use("/auth", authRoutes);
+app.use("/users", userRoutes);
+app.use("/posts", postRoutes);
+
+/* DB + SERVER */
+const PORT = process.env.PORT || 6001;
+
+mongoose
+  .connect(process.env.MONGO_URL, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => {
+    console.log("MongoDB connected");
+
+    /* CREATE HTTP SERVER */
+    const server = http.createServer(app);
+
+    /* SOCKET.IO SETUP */
+    const io = new Server(server, {
+      cors: {
+        origin: "http://localhost:3000",
+        methods: ["GET", "POST"],
+      },
+    });
+
+    /* MAKE io AVAILABLE IN CONTROLLERS */
+    app.use((req, res, next) => {
+      req.io = io;
+      next();
+    });
+
+    /* SOCKET LOGIC (SINGLE SOURCE OF TRUTH) */
+    io.on("connection", (socket) => {
+      console.log("User connected:", socket.id);
+
+      // notifications
+      socket.on("sendNotification", (data) => {
+        socket.broadcast.emit("receiveNotification", data);
+      });
+
+      // join friends room
+      socket.on("joinFriendsRoom", (userId) => {
+        socket.join(`friends-${userId}`);
+      });
+
+      // live location
+      socket.on("shareLocation", (data) => {
+        io.to(`friends-${data.userId}`).emit("receiveLocation", data);
+      });
+
+      socket.on("stopLocation", (data) => {
+        io.to(`friends-${data.userId}`).emit("locationStopped");
+      });
+
+      socket.on("disconnect", () => {
+        console.log("User disconnected:", socket.id);
+      });
+    });
+
+    /* START SERVER */
+    server.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.log("MongoDB connection failed:", error.message);
+  });
