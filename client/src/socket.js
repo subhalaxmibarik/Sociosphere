@@ -1,5 +1,6 @@
 import { io } from "socket.io-client";
 
-const socket = io("http://localhost:3001");
+const SOCKET_URL = "https://sociosphere-6ykl.onrender.com"; // HTTPS
+const socket = io(SOCKET_URL, { transports: ["websocket"] });
 
 export default socket;

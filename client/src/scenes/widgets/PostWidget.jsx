@@ -17,7 +17,7 @@ import Friend from "components/Friend";
 import WidgetWrapper from "components/WidgetWrapper";
 import { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import { setPost, removePost } from "state"; // 👈 removePost preferred
+import { setPost, removePost } from "state";
 
 const PostWidget = ({
   postId,
@@ -35,8 +35,12 @@ const PostWidget = ({
   const token = useSelector((state) => state.token);
   const loggedInUserId = useSelector((state) => state.user._id);
 
-  const isLiked = Boolean(likes[loggedInUserId]);
-  const likeCount = Object.keys(likes).length;
+  // ✅ SAFETY GUARDS (MAIN FIX)
+  const safeLikes = likes || {};
+  const safeComments = comments || [];
+
+  const isLiked = Boolean(safeLikes[loggedInUserId]);
+  const likeCount = Object.keys(safeLikes).length;
 
   const { palette } = useTheme();
   const main = palette.neutral.main;
@@ -44,7 +48,7 @@ const PostWidget = ({
 
   const patchLike = async () => {
     const response = await fetch(
-      `http://localhost:3001/posts/${postId}/like`,
+      `${process.env.REACT_APP_BASE_URL}/posts/${postId}/like`,
       {
         method: "PATCH",
         headers: {
@@ -62,14 +66,14 @@ const PostWidget = ({
     if (!window.confirm("Delete this post?")) return;
 
     try {
-      await fetch(`http://localhost:3001/posts/${postId}`, {
+      await fetch(`${process.env.REACT_APP_BASE_URL}/posts/${postId}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${token}`,
         },
       });
 
-      dispatch(removePost(postId)); // ✅ correct
+      dispatch(removePost(postId));
     } catch (err) {
       console.error(err);
     }
@@ -93,7 +97,7 @@ const PostWidget = ({
           width="100%"
           alt="post"
           style={{ borderRadius: "0.75rem", marginTop: "0.75rem" }}
-          src={`http://localhost:3001/assets/${picturePath}`}
+          src={`${process.env.REACT_APP_BASE_URL}/assets/${picturePath}`}
         />
       )}
 
@@ -115,7 +119,7 @@ const PostWidget = ({
             <IconButton onClick={() => setIsComments(!isComments)}>
               <ChatBubbleOutlineOutlined />
             </IconButton>
-            <Typography>{comments.length}</Typography>
+            <Typography>{safeComments.length}</Typography>
           </FlexBetween>
         </FlexBetween>
 
@@ -135,7 +139,7 @@ const PostWidget = ({
       {/* COMMENTS */}
       {isComments && (
         <Box mt="0.5rem">
-          {comments.map((comment, i) => (
+          {safeComments.map((comment, i) => (
             <Box key={`${postId}-${i}`}>
               <Divider />
               <Typography sx={{ color: main, m: "0.5rem 0", pl: "1rem" }}>

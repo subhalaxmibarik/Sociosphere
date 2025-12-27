@@ -11,7 +11,8 @@ import { fileURLToPath } from "url";
 import http from "http";
 import { Server } from "socket.io";
 
-/* ROUTES & CONTROLLERS */
+/* MODELS & ROUTES */
+import User from "./models/User.js";
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/users.js";
 import postRoutes from "./routes/posts.js";
@@ -26,7 +27,7 @@ dotenv.config();
 
 const app = express();
 
-/* MIDDLEWARE */
+/* ---------------- MIDDLEWARE ---------------- */
 app.use(express.json());
 app.use(helmet());
 app.use(helmet.crossOriginResourcePolicy({ policy: "cross-origin" }));
@@ -36,83 +37,62 @@ app.use(bodyParser.urlencoded({ limit: "30mb", extended: true }));
 app.use(cors());
 app.use("/assets", express.static(path.join(__dirname, "public/assets")));
 
-/* FILE STORAGE */
+/* ---------------- FILE STORAGE ---------------- */
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, "public/assets"),
   filename: (req, file, cb) => cb(null, file.originalname),
 });
 const upload = multer({ storage });
 
-/* ROUTES WITH FILE UPLOAD */
+/* ---------------- ROUTES WITH FILE UPLOAD ---------------- */
 app.post("/auth/register", upload.single("picture"), register);
 app.post("/posts", verifyToken, upload.single("picture"), createPost);
 
-/* ROUTES */
+/* ---------------- ROUTES ---------------- */
 app.use("/auth", authRoutes);
 app.use("/users", userRoutes);
 app.use("/posts", postRoutes);
 
-/* DB + SERVER */
+/* ---------------- SERVER + SOCKET ---------------- */
 const PORT = process.env.PORT || 3001;
+const server = http.createServer(app);
 
+const io = new Server(server, {
+  cors: {
+    origin: "http://localhost:3000", // frontend URL
+    methods: ["GET", "POST"],
+  },
+});
+
+/* ---------------- SOCKET.IO LOGIC ---------------- */
+io.on("connection", (socket) => {
+  console.log("🟢 User connected:", socket.id);
+
+  // receive location from sharer and broadcast to all others
+  socket.on("sendLocation", (data) => {
+    socket.broadcast.emit("receiveLocation", data);
+  });
+
+  // stop sharing
+  socket.on("stopLocation", (data) => {
+    socket.broadcast.emit("stopLocation", data);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("🔴 User disconnected:", socket.id);
+  });
+});
+
+/* ---------------- DB + START ---------------- */
 mongoose
   .connect(process.env.MONGO_URL, {
     useNewUrlParser: true,
     useUnifiedTopology: true,
   })
   .then(() => {
-    console.log("MongoDB connected");
-
-    /* CREATE HTTP SERVER */
-    const server = http.createServer(app);
-
-    /* SOCKET.IO SETUP */
-    const io = new Server(server, {
-      cors: {
-        origin: "http://localhost:3000",
-        methods: ["GET", "POST"],
-      },
-    });
-
-    /* MAKE io AVAILABLE IN CONTROLLERS */
-    app.use((req, res, next) => {
-      req.io = io;
-      next();
-    });
-
-    /* SOCKET LOGIC (SINGLE SOURCE OF TRUTH) */
-    io.on("connection", (socket) => {
-      console.log("User connected:", socket.id);
-
-      // notifications
-      socket.on("sendNotification", (data) => {
-        socket.broadcast.emit("receiveNotification", data);
-      });
-
-      // join friends room
-      socket.on("joinFriendsRoom", (userId) => {
-        socket.join(`friends-${userId}`);
-      });
-
-      // live location
-      socket.on("shareLocation", (data) => {
-        io.to(`friends-${data.userId}`).emit("receiveLocation", data);
-      });
-
-      socket.on("stopLocation", (data) => {
-        io.to(`friends-${data.userId}`).emit("locationStopped");
-      });
-
-      socket.on("disconnect", () => {
-        console.log("User disconnected:", socket.id);
-      });
-    });
-
-    /* START SERVER */
-    server.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
+    console.log("✅ MongoDB connected");
+    server.listen(PORT, () =>
+      console.log(`🚀 Server running on port ${PORT}`)
+    );
   })
-  .catch((error) => {
-    console.log("MongoDB connection failed:", error.message);
-  });
+  .catch((err) => console.log("❌ MongoDB error:", err.message));
